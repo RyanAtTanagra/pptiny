@@ -1,35 +1,26 @@
-# Example Apache Virtual Host Configuration
-# Add this to your Apache site configuration (e.g., /etc/apache2/sites-available/tinyurl.conf)
-
 <VirtualHost *:80>
-    ServerName irc.twistedslinky.org
+    ServerName pptiny.twistedslinky.org
 
-    # Document root
-    DocumentRoot /var/www/irc.twistedslinky.org/tinyurl
+    DocumentRoot /var/www/pptiny
 
     # WSGI Configuration
     WSGIDaemonProcess tinyurl user=www-data group=www-data threads=5
-    WSGIScriptAlias / /var/www/irc.twistedslinky.org/tinyurl/wsgi.py
+    WSGIScriptAlias / /var/www/pptiny/wsgi.py
 
-    <Directory /var/www/irc.twistedslinky.org/tinyurl>
+
+    <Directory /var/www/pptiny>
+	Options -Indexes
+        <LimitExcept POST>
+            Require all granted
+        </LimitExcept>
+    
+        <Limit POST>
+            Require ip 127.0.0.1 ::1
+        </Limit>
         WSGIProcessGroup tinyurl
         WSGIApplicationGroup %{GLOBAL}
-        Require all granted
     </Directory>
 
-    # Logging
-    ErrorLog ${APACHE_LOG_DIR}/tinyurl_error.log
-    CustomLog ${APACHE_LOG_DIR}/tinyurl_access.log combined
+    ErrorLog ${APACHE_LOG_DIR}/pptiny_error.log
+    CustomLog ${APACHE_LOG_DIR}/pptiny_access.log combined
 </VirtualHost>
-
-# Alternative: If you want this in a subdirectory instead of the whole domain
-# Add this to an existing VirtualHost configuration:
-#
-# WSGIDaemonProcess tinyurl user=www-data group=www-data threads=5
-# WSGIScriptAlias /tinyurl /var/www/irc.twistedslinky.org/tinyurl/wsgi.py
-#
-# <Directory /var/www/irc.twistedslinky.org/tinyurl>
-#     WSGIProcessGroup tinyurl
-#     WSGIApplicationGroup %{GLOBAL}
-#     Require all granted
-# </Directory>

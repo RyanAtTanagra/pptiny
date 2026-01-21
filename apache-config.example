@@ -1,0 +1,35 @@
+# Example Apache Virtual Host Configuration
+# Add this to your Apache site configuration (e.g., /etc/apache2/sites-available/tinyurl.conf)
+
+<VirtualHost *:80>
+    ServerName irc.twistedslinky.org
+
+    # Document root
+    DocumentRoot /var/www/irc.twistedslinky.org/tinyurl
+
+    # WSGI Configuration
+    WSGIDaemonProcess tinyurl user=www-data group=www-data threads=5
+    WSGIScriptAlias / /var/www/irc.twistedslinky.org/tinyurl/wsgi.py
+
+    <Directory /var/www/irc.twistedslinky.org/tinyurl>
+        WSGIProcessGroup tinyurl
+        WSGIApplicationGroup %{GLOBAL}
+        Require all granted
+    </Directory>
+
+    # Logging
+    ErrorLog ${APACHE_LOG_DIR}/tinyurl_error.log
+    CustomLog ${APACHE_LOG_DIR}/tinyurl_access.log combined
+</VirtualHost>
+
+# Alternative: If you want this in a subdirectory instead of the whole domain
+# Add this to an existing VirtualHost configuration:
+#
+# WSGIDaemonProcess tinyurl user=www-data group=www-data threads=5
+# WSGIScriptAlias /tinyurl /var/www/irc.twistedslinky.org/tinyurl/wsgi.py
+#
+# <Directory /var/www/irc.twistedslinky.org/tinyurl>
+#     WSGIProcessGroup tinyurl
+#     WSGIApplicationGroup %{GLOBAL}
+#     Require all granted
+# </Directory>

@@ -4,7 +4,6 @@ import json
 import logging
 import os
 import secrets
-import socket
 import sqlite3
 import string
 from urllib.parse import urlparse
@@ -13,6 +12,7 @@ DB_PATH = os.environ.get('PPTINY_DB', '/var/lib/pptiny/urls.db')
 CANONICAL_HOST = os.environ.get('PPTINY_HOST')
 ALLOW_PRIVATE = os.environ.get('PPTINY_ALLOW_PRIVATE') == '1'
 MAX_URL_LENGTH = 2048
+MAX_BODY_BYTES = 4096
 SHORT_CODE_LENGTH = 8
 MAX_ROWS = 1_000_000
 REDIRECT_CACHE_SECONDS = 300
@@ -28,12 +28,14 @@ def _short_code(length=SHORT_CODE_LENGTH):
     return ''.join(secrets.choice(chars) for _ in range(length))
 
 
-def _json_response(start_response, status, payload):
+def _json_response(start_response, status, payload, extra_headers=()):
     body = json.dumps(payload).encode()
-    start_response(status, [
+    headers = [
         ('Content-Type', 'application/json'),
         ('X-Content-Type-Options', 'nosniff'),
-    ])
+    ]
+    headers.extend(extra_headers)
+    start_response(status, headers)
     return [body]
 
 
@@ -45,24 +47,14 @@ def _text_response(start_response, status, body):
     return [body]
 
 
-def _host_is_private(host):
-    # DNS resolution at insert time; this is advisory, not a security boundary
-    # (TOCTOU: DNS can be flipped after insert). It's meant to make weaponizing
-    # the shortener for internal-endpoint phishing noticeably harder.
+def _host_is_blocked_literal(host):
+    # IP-literal check only — no DNS resolution. Hostnames are accepted as-is.
     try:
-        infos = socket.getaddrinfo(host, None)
-    except socket.gaierror:
-        return True
-    for info in infos:
-        addr = info[4][0]
-        try:
-            ip = ipaddress.ip_address(addr.split('%', 1)[0])
-        except ValueError:
-            continue
-        if (ip.is_loopback or ip.is_private or ip.is_link_local
-                or ip.is_reserved or ip.is_multicast or ip.is_unspecified):
-            return True
-    return False
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return (ip.is_loopback or ip.is_private or ip.is_link_local
+            or ip.is_reserved or ip.is_multicast or ip.is_unspecified)
 
 
 def _valid_url(url):
@@ -78,7 +70,7 @@ def _valid_url(url):
         return False
     if not parsed.hostname:
         return False
-    if not ALLOW_PRIVATE and _host_is_private(parsed.hostname):
+    if not ALLOW_PRIVATE and _host_is_blocked_literal(parsed.hostname):
         return False
     return True
 
@@ -96,7 +88,10 @@ def _handle_post(environ, start_response):
                                   {'error': 'Content-Type must be application/json'})
 
         content_length = int(environ.get('CONTENT_LENGTH', 0) or 0)
-        body = environ['wsgi.input'].read(content_length)
+        if content_length > MAX_BODY_BYTES:
+            return _json_response(start_response, '413 Payload Too Large',
+                                  {'error': 'Request body too large'})
+        body = environ['wsgi.input'].read(min(content_length, MAX_BODY_BYTES))
         data = json.loads(body.decode('utf-8'))
         long_url = data.get('url', '')
 
@@ -136,11 +131,11 @@ def _handle_post(environ, start_response):
         scheme = environ.get('wsgi.url_scheme', 'http')
         short_url = f"{scheme}://{_canonical_host(environ)}/{short_code}"
 
-        return _json_response(start_response, '200 OK', {
+        return _json_response(start_response, '201 Created', {
             'short_url': short_url,
             'short_code': short_code,
             'long_url': long_url,
-        })
+        }, extra_headers=[('Location', f'/{short_code}')])
 
     except json.JSONDecodeError:
         return _json_response(start_response, '400 Bad Request', {'error': 'Invalid JSON'})

@@ -22,6 +22,10 @@
 
     <Directory /var/www/pptiny>
         Options -Indexes
+
+        # Outer cap on request bodies; app also caps at 4096 bytes.
+        LimitRequestBody 65536
+
         <Limit GET HEAD>
             Require all granted
         </Limit>

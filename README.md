@@ -29,7 +29,7 @@ A minimal URL shortener built with pure Python (no dependencies).
 |---|---|---|
 | `PPTINY_DB` | SQLite DB path | `/var/lib/pptiny/urls.db` |
 | `PPTINY_HOST` | Canonical host used when constructing `short_url` in POST responses (not reflected from `Host` header) | falls back to `SERVER_NAME`, then `HTTP_HOST` |
-| `PPTINY_ALLOW_PRIVATE` | Set to `1` to allow short URLs that resolve to loopback/private/link-local IPs (useful for local dev) | unset (private destinations blocked) |
+| `PPTINY_ALLOW_PRIVATE` | Set to `1` to allow short URLs whose host is a loopback/private/link-local IP literal (useful for local dev) | unset (private IP literals blocked) |
 
 ## Setup Instructions
 
@@ -90,7 +90,7 @@ curl -X POST https://localhost/ \
   -d '{"url": "https://example.com/very/long/url"}'
 ```
 
-Response:
+Response: `201 Created` with `Location: /<code>` header and JSON body:
 ```json
 {
   "short_url": "https://pptiny.twistedslinky.org/abc12345",
@@ -127,7 +127,8 @@ sudo -u www-data python3 -c "import sqlite3; db=sqlite3.connect('/var/lib/pptiny
 - **Non-GET restricted to localhost**: Apache-enforced for POST, DELETE, and any future method
 - **CSPRNG codes**: 8-char alphanumeric via `secrets.choice`
 - **URL validation**: `urllib.parse` check for `http`/`https` scheme, non-empty host, no control characters, length cap
-- **Private-destination block**: URLs resolving to loopback / RFC1918 / link-local / reserved / multicast IPs are rejected at insert time (advisory — see caveat below). Override with `PPTINY_ALLOW_PRIVATE=1`
+- **Private IP-literal block**: URLs whose host is a loopback / RFC1918 / link-local / reserved / multicast IP literal are rejected. Hostnames are **not** resolved (no DNS lookups on the POST path). Override with `PPTINY_ALLOW_PRIVATE=1`
+- **Body size cap**: Requests larger than 4 KiB are rejected with `413`. Apache `LimitRequestBody 65536` is an outer cap
 - **Canonical host**: Response `short_url` uses `PPTINY_HOST`, not the client-supplied `Host` header
 - **Redirect caching**: `302 Found` + short `Cache-Control` lets removed codes expire from browser caches quickly
 - **TOCTOU-safe row cap**: Count + insert wrapped in `BEGIN IMMEDIATE`
@@ -138,9 +139,9 @@ sudo -u www-data python3 -c "import sqlite3; db=sqlite3.connect('/var/lib/pptiny
 
 The restriction model assumes only trusted processes on the host can reach the WSGI app over localhost. Anyone who can POST — a neighboring service with SSRF, a compromised local account, a careless cron job — can mint redirects on the shortener's domain pointing anywhere on the public internet. Treat localhost POST access as equivalent to the ability to create phishing links on your domain.
 
-**Caveat on the private-destination block:** it runs at insert time and resolves DNS once. An attacker who controls DNS for a destination can point it at a public IP during insert and flip it to an internal IP later. The block raises the bar for casual abuse but is not a security boundary; it does not replace network-level egress controls on whatever clicks the link.
+**Caveat on the IP-literal block:** it only catches URLs where the host is literally an internal IP (e.g. `http://10.0.0.1/`). A URL whose hostname resolves to an internal IP (`http://internal.corp/`) is not rejected — we don't do DNS lookups on the POST path. Internal-endpoint phishing via custom DNS is out of scope for this app; if that matters, add network-level egress controls on clients or an explicit destination-domain allowlist.
 
-If this surface is unacceptable, add a destination-domain allowlist or an authentication layer in front of POST/DELETE.
+If localhost POST access itself is too broad, add an authentication layer in front of POST/DELETE.
 
 ## Architecture
 

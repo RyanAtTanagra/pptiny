@@ -9,14 +9,14 @@
 
 
     <Directory /var/www/pptiny>
-	Options -Indexes
-        <LimitExcept POST>
+        Options -Indexes
+        <Limit GET HEAD>
             Require all granted
-        </LimitExcept>
-    
-        <Limit POST>
-            Require ip 127.0.0.1 ::1
         </Limit>
+
+        <LimitExcept GET HEAD>
+            Require ip 127.0.0.1 ::1
+        </LimitExcept>
         WSGIProcessGroup tinyurl
         WSGIApplicationGroup %{GLOBAL}
     </Directory>

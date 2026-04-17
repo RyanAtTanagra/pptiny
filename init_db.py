@@ -8,6 +8,7 @@ DB_PATH = os.environ.get('PPTINY_DB', '/var/lib/pptiny/urls.db')
 def init_db():
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     db = sqlite3.connect(DB_PATH)
+    db.execute('PRAGMA journal_mode=WAL')
     db.execute('''CREATE TABLE IF NOT EXISTS urls (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         short_code TEXT UNIQUE NOT NULL,

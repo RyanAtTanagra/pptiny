@@ -1,12 +1,24 @@
+# Redirect all plain HTTP traffic to HTTPS.
 <VirtualHost *:80>
+    ServerName pptiny.twistedslinky.org
+    Redirect permanent / https://pptiny.twistedslinky.org/
+</VirtualHost>
+
+<VirtualHost *:443>
     ServerName pptiny.twistedslinky.org
 
     DocumentRoot /var/www/pptiny
 
-    # WSGI Configuration
+    SSLEngine on
+    SSLCertificateFile    /etc/letsencrypt/live/pptiny.twistedslinky.org/fullchain.pem
+    SSLCertificateKeyFile /etc/letsencrypt/live/pptiny.twistedslinky.org/privkey.pem
+
+    # PPTINY_HOST pins the host used when building short_url responses so it
+    # isn't reflected from a client-supplied Host header.
+    SetEnv PPTINY_HOST pptiny.twistedslinky.org
+
     WSGIDaemonProcess tinyurl user=www-data group=www-data threads=5
     WSGIScriptAlias / /var/www/pptiny/wsgi.py
-
 
     <Directory /var/www/pptiny>
         Options -Indexes
@@ -14,9 +26,13 @@
             Require all granted
         </Limit>
 
+        # Any write-ish method (POST, DELETE, PUT, PATCH, WebDAV verbs) is
+        # restricted to localhost. The app only implements POST and DELETE,
+        # but belt-and-suspenders at the Apache layer is cheap.
         <LimitExcept GET HEAD>
             Require ip 127.0.0.1 ::1
         </LimitExcept>
+
         WSGIProcessGroup tinyurl
         WSGIApplicationGroup %{GLOBAL}
     </Directory>

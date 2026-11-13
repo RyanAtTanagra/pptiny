@@ -1,21 +1,28 @@
-# Redirect all plain HTTP traffic to HTTPS.
+# HTTP -> HTTPS
 <VirtualHost *:80>
-    ServerName pptiny.twistedslinky.org
-    Redirect permanent / https://pptiny.twistedslinky.org/
+    ServerName pptiny.example.com
+    Redirect permanent / https://pptiny.example.com/
 </VirtualHost>
 
 <VirtualHost *:443>
-    ServerName pptiny.twistedslinky.org
+    ServerName pptiny.example.com
 
     DocumentRoot /var/www/pptiny
 
     SSLEngine on
-    SSLCertificateFile    /etc/letsencrypt/live/pptiny.twistedslinky.org/fullchain.pem
-    SSLCertificateKeyFile /etc/letsencrypt/live/pptiny.twistedslinky.org/privkey.pem
+    SSLCertificateFile    /etc/letsencrypt/live/pptiny.example.com/fullchain.pem
+    SSLCertificateKeyFile /etc/letsencrypt/live/pptiny.example.com/privkey.pem
 
-    # PPTINY_HOST pins the host used when building short_url responses so it
-    # isn't reflected from a client-supplied Host header.
-    SetEnv PPTINY_HOST pptiny.twistedslinky.org
+    # SERVER_NAME = ServerName, not the client's Host header.
+    UseCanonicalName On
+
+    # HSTS, one year. Needs mod_headers.
+    Header always set Strict-Transport-Security "max-age=31536000"
+
+    # App settings (see README). PPTINY_HOST pins the host in short_url.
+    SetEnv PPTINY_HOST pptiny.example.com
+    # SetEnv PPTINY_DB /var/lib/pptiny/urls.db
+    # SetEnv PPTINY_ALLOW_PRIVATE 1
 
     WSGIDaemonProcess tinyurl user=www-data group=www-data threads=5
     WSGIScriptAlias / /var/www/pptiny/wsgi.py
@@ -23,16 +30,14 @@
     <Directory /var/www/pptiny>
         Options -Indexes
 
-        # Outer cap on request bodies; app also caps at 4096 bytes.
+        # Outer body cap; the app caps at 4096.
         LimitRequestBody 65536
 
         <Limit GET HEAD>
             Require all granted
         </Limit>
 
-        # Any write-ish method (POST, DELETE, PUT, PATCH, WebDAV verbs) is
-        # restricted to localhost. The app only implements POST and DELETE,
-        # but belt-and-suspenders at the Apache layer is cheap.
+        # Everything except GET/HEAD is localhost-only.
         <LimitExcept GET HEAD>
             Require ip 127.0.0.1 ::1
         </LimitExcept>

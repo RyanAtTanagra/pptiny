@@ -8,19 +8,25 @@ import sqlite3
 import string
 from urllib.parse import urlparse
 
-DB_PATH = os.environ.get('PPTINY_DB', '/var/lib/pptiny/urls.db')
-CANONICAL_HOST = os.environ.get('PPTINY_HOST')
-ALLOW_PRIVATE = os.environ.get('PPTINY_ALLOW_PRIVATE') == '1'
+DEFAULT_DB_PATH = '/var/lib/pptiny/urls.db'
 MAX_URL_LENGTH = 2048
 MAX_BODY_BYTES = 4096
 SHORT_CODE_LENGTH = 8
 MAX_ROWS = 1_000_000
 REDIRECT_CACHE_SECONDS = 300
-CONTROL_CHARS = set(range(0x00, 0x20)) | {0x7f}
 
 logger = logging.getLogger('pptiny')
 if not logger.handlers:
     logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
+
+
+def _setting(environ, key):
+    # mod_wsgi puts SetEnv values in the WSGI environ, not os.environ.
+    return environ.get(key) or os.environ.get(key)
+
+
+def _db_path(environ):
+    return _setting(environ, 'PPTINY_DB') or DEFAULT_DB_PATH
 
 
 def _short_code(length=SHORT_CODE_LENGTH):
@@ -39,16 +45,18 @@ def _json_response(start_response, status, payload, extra_headers=()):
     return [body]
 
 
-def _text_response(start_response, status, body):
-    start_response(status, [
+def _text_response(start_response, status, body, extra_headers=()):
+    headers = [
         ('Content-Type', 'text/plain'),
         ('X-Content-Type-Options', 'nosniff'),
-    ])
+    ]
+    headers.extend(extra_headers)
+    start_response(status, headers)
     return [body]
 
 
 def _host_is_blocked_literal(host):
-    # IP-literal check only — no DNS resolution. Hostnames are accepted as-is.
+    # IP literals only; hostnames are not resolved.
     try:
         ip = ipaddress.ip_address(host)
     except ValueError:
@@ -57,10 +65,11 @@ def _host_is_blocked_literal(host):
             or ip.is_reserved or ip.is_multicast or ip.is_unspecified)
 
 
-def _valid_url(url):
+def _valid_url(url, allow_private=False):
     if not isinstance(url, str) or not url or len(url) > MAX_URL_LENGTH:
         return False
-    if any(ord(c) in CONTROL_CHARS for c in url):
+    # Printable ASCII only, so the URL is safe as a Location header.
+    if any(not 0x21 <= ord(c) <= 0x7e for c in url):
         return False
     try:
         parsed = urlparse(url)
@@ -70,13 +79,14 @@ def _valid_url(url):
         return False
     if not parsed.hostname:
         return False
-    if not ALLOW_PRIVATE and _host_is_blocked_literal(parsed.hostname):
+    if not allow_private and _host_is_blocked_literal(parsed.hostname):
         return False
     return True
 
 
 def _canonical_host(environ):
-    return CANONICAL_HOST or environ.get('SERVER_NAME') or environ.get('HTTP_HOST', 'localhost')
+    return (_setting(environ, 'PPTINY_HOST') or environ.get('SERVER_NAME')
+            or environ.get('HTTP_HOST', 'localhost'))
 
 
 def _handle_post(environ, start_response):
@@ -87,18 +97,32 @@ def _handle_post(environ, start_response):
             return _json_response(start_response, '415 Unsupported Media Type',
                                   {'error': 'Content-Type must be application/json'})
 
-        content_length = int(environ.get('CONTENT_LENGTH', 0) or 0)
+        try:
+            content_length = int(environ.get('CONTENT_LENGTH') or 0)
+        except ValueError:
+            content_length = -1
+        if content_length < 0:
+            return _json_response(start_response, '400 Bad Request',
+                                  {'error': 'Invalid Content-Length'})
         if content_length > MAX_BODY_BYTES:
             return _json_response(start_response, '413 Payload Too Large',
                                   {'error': 'Request body too large'})
-        body = environ['wsgi.input'].read(min(content_length, MAX_BODY_BYTES))
-        data = json.loads(body.decode('utf-8'))
+        body = environ['wsgi.input'].read(content_length)
+        try:
+            # Covers UnicodeDecodeError and JSONDecodeError.
+            data = json.loads(body.decode('utf-8'))
+        except ValueError:
+            return _json_response(start_response, '400 Bad Request', {'error': 'Invalid JSON'})
+        if not isinstance(data, dict):
+            return _json_response(start_response, '400 Bad Request',
+                                  {'error': 'JSON body must be an object'})
         long_url = data.get('url', '')
 
-        if not _valid_url(long_url):
+        allow_private = _setting(environ, 'PPTINY_ALLOW_PRIVATE') == '1'
+        if not _valid_url(long_url, allow_private):
             return _json_response(start_response, '400 Bad Request', {'error': 'Invalid URL'})
 
-        db = sqlite3.connect(DB_PATH, timeout=1.0, isolation_level=None)
+        db = sqlite3.connect(_db_path(environ), timeout=1.0, isolation_level=None)
         db.execute('BEGIN IMMEDIATE')
         try:
             row_count = db.execute('SELECT COUNT(*) FROM urls').fetchone()[0]
@@ -137,8 +161,6 @@ def _handle_post(environ, start_response):
             'long_url': long_url,
         }, extra_headers=[('Location', f'/{short_code}')])
 
-    except json.JSONDecodeError:
-        return _json_response(start_response, '400 Bad Request', {'error': 'Invalid JSON'})
     except sqlite3.OperationalError:
         logger.exception('POST sqlite operational error')
         return _json_response(start_response, '503 Service Unavailable',
@@ -159,7 +181,7 @@ def _handle_get(environ, start_response, path):
 
     db = None
     try:
-        db = sqlite3.connect(DB_PATH, timeout=1.0)
+        db = sqlite3.connect(_db_path(environ), timeout=1.0)
         db.row_factory = sqlite3.Row
         result = db.execute(
             'SELECT long_url FROM urls WHERE short_code = ?', (path,)
@@ -192,7 +214,7 @@ def _handle_delete(environ, start_response, path):
 
     db = None
     try:
-        db = sqlite3.connect(DB_PATH, timeout=1.0)
+        db = sqlite3.connect(_db_path(environ), timeout=1.0)
         cursor = db.execute('DELETE FROM urls WHERE short_code = ?', (path,))
         db.commit()
         if cursor.rowcount == 0:
@@ -223,4 +245,5 @@ def application(environ, start_response):
         return _handle_get(environ, start_response, path)
     if method == 'DELETE':
         return _handle_delete(environ, start_response, path)
-    return _text_response(start_response, '405 Method Not Allowed', b'Method not allowed')
+    return _text_response(start_response, '405 Method Not Allowed', b'Method not allowed',
+                          extra_headers=[('Allow', 'GET, HEAD, POST, DELETE')])

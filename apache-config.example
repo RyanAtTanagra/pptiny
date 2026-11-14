@@ -7,32 +7,20 @@
 <VirtualHost *:443>
     ServerName pptiny.example.com
 
-    DocumentRoot /var/www/pptiny
-
     SSLEngine on
     SSLCertificateFile    /etc/letsencrypt/live/pptiny.example.com/fullchain.pem
     SSLCertificateKeyFile /etc/letsencrypt/live/pptiny.example.com/privkey.pem
 
-    # SERVER_NAME = ServerName, not the client's Host header.
-    UseCanonicalName On
-
     # HSTS, one year. Needs mod_headers.
     Header always set Strict-Transport-Security "max-age=31536000"
 
-    # App settings (see README). PPTINY_HOST pins the host in short_url.
+    # Host used in short_url responses.
     SetEnv PPTINY_HOST pptiny.example.com
-    # SetEnv PPTINY_DB /var/lib/pptiny/urls.db
-    # SetEnv PPTINY_ALLOW_PRIVATE 1
 
-    WSGIDaemonProcess tinyurl user=www-data group=www-data threads=5
-    WSGIScriptAlias / /var/www/pptiny/wsgi.py
+    WSGIDaemonProcess pptiny
+    WSGIScriptAlias / /var/www/pptiny/wsgi.py process-group=pptiny application-group=%{GLOBAL}
 
     <Directory /var/www/pptiny>
-        Options -Indexes
-
-        # Outer body cap; the app caps at 4096.
-        LimitRequestBody 65536
-
         <Limit GET HEAD>
             Require all granted
         </Limit>
@@ -41,9 +29,6 @@
         <LimitExcept GET HEAD>
             Require ip 127.0.0.1 ::1
         </LimitExcept>
-
-        WSGIProcessGroup tinyurl
-        WSGIApplicationGroup %{GLOBAL}
     </Directory>
 
     ErrorLog ${APACHE_LOG_DIR}/pptiny_error.log

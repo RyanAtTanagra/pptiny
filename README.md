@@ -22,7 +22,7 @@ Localhost-only methods are enforced at the Apache layer via `<LimitExcept GET HE
 └── init_db.py      # One-time database init
 
 /var/lib/pptiny/
-└── urls.db         # SQLite database (outside DocumentRoot)
+└── urls.db         # SQLite database (outside the app directory)
 ```
 
 ## Environment Variables
@@ -30,7 +30,7 @@ Localhost-only methods are enforced at the Apache layer via `<LimitExcept GET HE
 | Variable | Purpose | Default |
 |---|---|---|
 | `PPTINY_DB` | SQLite DB path | `/var/lib/pptiny/urls.db` |
-| `PPTINY_HOST` | Canonical host for `short_url` in POST responses (not reflected from `Host`) | `SERVER_NAME`, then `HTTP_HOST` |
+| `PPTINY_HOST` | Canonical host for `short_url` in POST responses (not reflected from `Host`) | `SERVER_NAME` |
 | `PPTINY_ALLOW_PRIVATE` | Set to `1` to allow loopback / private / link-local IP-literal destinations | unset |
 
 Under Apache, set these with `SetEnv` in the vhost. mod_wsgi delivers `SetEnv` values in the per-request WSGI environ (not the process environment), so the app reads each setting from there first and falls back to the process environment. `init_db.py` is a CLI script and reads `PPTINY_DB` from the process environment only.
@@ -62,10 +62,9 @@ See `apache-config.example`. Key points:
 
 - `:80` redirects to `:443` — no plaintext service
 - `:443` terminates TLS and runs the WSGI app
-- `SetEnv PPTINY_HOST pptiny.example.com` pins the canonical hostname; `UseCanonicalName On` backs it up by making `SERVER_NAME` the vhost's `ServerName` rather than the client's `Host` header
+- `SetEnv PPTINY_HOST pptiny.example.com` pins the canonical hostname
 - `Strict-Transport-Security` (HSTS, one year) is set on every HTTPS response via `mod_headers`
 - `<LimitExcept GET HEAD>` restricts POST/DELETE (and any other method) to localhost
-- `LimitRequestBody 65536` caps request bodies at the Apache layer
 
 Obtain a cert (e.g. via certbot), then:
 
@@ -145,7 +144,7 @@ sudo -u www-data python3 -c "import sqlite3; db=sqlite3.connect('/var/lib/pptiny
 | `405 Method Not Allowed` | Method outside `GET` / `HEAD` / `POST` / `DELETE` (sends an `Allow` header) |
 | `413 Payload Too Large` | POST body exceeds 4 KiB |
 | `415 Unsupported Media Type` | POST `Content-Type` is not `application/json` |
-| `500 Internal Server Error` | Unhandled error, or no unique code found after 10 attempts |
+| `500 Internal Server Error` | Unhandled error |
 | `503 Service Unavailable` | SQLite operational error (usually lock contention) |
 | `507 Insufficient Storage` | DB row cap (`MAX_ROWS`) reached |
 
@@ -156,13 +155,13 @@ sudo -u www-data python3 -c "import sqlite3; db=sqlite3.connect('/var/lib/pptiny
 - **CSPRNG short codes**: 8-char alphanumeric via `secrets.choice`
 - **URL validation**: `urllib.parse` — `http`/`https` scheme, non-empty host, printable ASCII only (no control characters, spaces, or non-ASCII — percent-encode instead), 2048-char length cap
 - **Private IP-literal block**: URLs whose host is a loopback / RFC1918 / link-local / reserved / multicast IP literal are rejected. Hostnames are **not** resolved — no DNS lookups on the POST path. Override with `PPTINY_ALLOW_PRIVATE=1`
-- **Body size cap**: 4 KiB at the app layer (`413` on overflow), 64 KiB at the Apache layer
+- **Body size cap**: 4 KiB (`413` on overflow)
 - **Canonical host**: POST response `short_url` uses `PPTINY_HOST`, not the client-supplied `Host` header
 - **No rate limiting**: not built in. Short codes are not practically guessable (62^8 space), but if request floods matter for your deployment, add it at the Apache or network layer
 - **Redirect caching**: `302 Found` + short `Cache-Control` lets removed codes expire from browser caches quickly
 - **TOCTOU-safe row cap**: count + insert wrapped in `BEGIN IMMEDIATE`
 - **`X-Content-Type-Options: nosniff`** on every response
-- **DB outside DocumentRoot**: cannot be served by a misconfigured Apache
+- **DB outside the app directory**: cannot be served by a misconfigured Apache
 
 ## Threat Model
 
